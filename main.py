@@ -16,7 +16,8 @@ def load_config(filepath="config.json"):
     defaults = {
         "font_size": 12, 
         "theme": "dark",
-        "obsidian_path": "C:/Users/bounc/OneDrive/문서/SummerVCT/Notes"
+        "obsidian_path": "C:/Users/bounc/OneDrive/문서/SummerVCT/Notes",
+        "gemini_batch_size": 30
     }
 
     if not os.path.exists(config_path):
@@ -28,7 +29,8 @@ def load_config(filepath="config.json"):
             return {
                 "font_size": config.get("font_size", defaults["font_size"]),
                 "theme": config.get("theme", defaults["theme"]),
-                "obsidian_path": config.get("obsidian_path", defaults["obsidian_path"])
+                "obsidian_path": config.get("obsidian_path", defaults["obsidian_path"]),
+                "gemini_batch_size": config.get("gemini_batch_size", defaults["gemini_batch_size"])
             }
     except (json.JSONDecodeError, IOError):
         return defaults
@@ -252,35 +254,56 @@ class App(tk.Tk):
 
     def process_videos_thread(self):
         total = len(self.selected_videos)
-        for i, video in enumerate(self.selected_videos):
-            video_id = video['id']
-            video_title = video['title']
-            self.q.put(("log", f"[{i+1}/{total}] '{video_title}' 영상 처리 시작..."))
+        batch_size = CONFIG.get("gemini_batch_size", 30)
+        
+        video_map = {v['id']: v for v in self.selected_videos}
+
+        for i in range(0, total, batch_size):
+            batch_videos = self.selected_videos[i:i+batch_size]
+            self.q.put(("log", f"--- 배치 처리 시작: {i+1} ~ {min(i+batch_size, total)} / {total} ---"))
+
+            tasks = []
+            for video in batch_videos:
+                video_id = video['id']
+                video_title = video['title']
+                self.q.put(("log", f"  - '{video_title}' 스크립트 준비 중..."))
+                try:
+                    transcript, _ = youtube_helper.get_transcript(video_id)
+                    if not transcript:
+                        self.q.put(("log", f"  - 경고: '{video_title}' 스크립트를 찾을 수 없어 건너뜁니다."))
+                        continue
+                    
+                    prompt_with_title = f"영상 제목: {video_title}\n\n{self.user_prompt}"
+                    full_prompt = f"{prompt_with_title}\n\n--- 원본 스크립트 ---\n{transcript}\n--- 원본 스크립트 끝 ---"
+                    tasks.append({"id": video_id, "task": full_prompt})
+
+                except Exception as e:
+                    self.q.put(("log", f"  - ✗ 오류: '{video_title}' 스크립트 추출 중 문제 발생 - {e}"))
+
+            if not tasks:
+                self.q.put(("log", "--- 현재 배치에서 처리할 작업이 없습니다. ---"))
+                continue
+
             try:
-                self.q.put(("log", "  - 스크립트 추출 중..."))
-                transcript, segment_count = youtube_helper.get_transcript(video_id)
-                if not transcript:
-                    self.q.put(("log", f"  - 경고: 스크립트를 찾을 수 없어 건너뜁니다."))
-                    continue
-
-                self.q.put(("log", f"  - 자막 세그먼트 수: {segment_count}"))
-                if segment_count > 300:
-                    self.q.put(("log", ">>> 주목: 세그먼트가 300개를 초과하여 Gemini 처리 진행도를 표시합니다."))
-
-                self.q.put(("log", "  - Gemini API로 내용 가공 중..."))
-                prompt_with_title = f"영상 제목: {video_title}\n\n{self.user_prompt}"
+                self.q.put(("log", f"  - Gemini API로 {len(tasks)}개 작업 배치 요청..."))
+                results = gemini_helper.process_batch_with_gemini(tasks)
                 
-                if segment_count > 300:
-                    processed_content = gemini_helper.process_text_with_gemini(transcript, prompt_with_title, progress_callback=lambda p: self.q.put(("progress", p)))
-                else:
-                    processed_content = gemini_helper.process_text_with_gemini(transcript, prompt_with_title)
+                result_map = {res['id']: res['result'] for res in results}
 
-                self.q.put(("log", "  - Obsidian 노트 저장 중..."))
-                file_helper.save_as_obsidian_note(self.obsidian_path, processed_content)
-                self.q.put(("log", f"  - ✓ 완료: '{video_title}' 노트 생성 완료\n"))
+                for task in tasks:
+                    video_id = task['id']
+                    video_title = video_map[video_id]['title']
+                    
+                    if video_id in result_map:
+                        processed_content = result_map[video_id]
+                        self.q.put(("log", f"  - '{video_title}' 내용 가공 완료. 노트 저장 중..."))
+                        file_helper.save_as_obsidian_note(self.obsidian_path, processed_content)
+                        self.q.put(("log", f"  - ✓ 완료: '{video_title}' 노트 생성 완료"))
+                    else:
+                        self.q.put(("log", f"  - ✗ 오류: '{video_title}' 처리 결과가 없습니다."))
 
             except Exception as e:
-                self.q.put(("log", f"  - ✗ 오류: 처리 중 문제 발생 - {e}\n"))
+                self.q.put(("log", f"  - ✗ 오류: Gemini 배치 처리 중 문제 발생 - {e}"))
         
         self.q.put(("done", "모든 작업이 완료되었습니다!"))
 
