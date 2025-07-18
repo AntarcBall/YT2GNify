@@ -143,7 +143,7 @@ def get_videos_from_channel(channel_url, include_shorts=False):
 
 def get_transcript(video_id, proxy_url=None):
     """
-    주어진 영상 ID의 스크립트를 우선순위에 따라 추출하여 텍스트로 반환합니다.
+    주어진 영상 ID의 스크립트를 우선순위에 따라 추출하여 텍스트와 세그먼트 수를 반환합니다.
     개선된 자막 검색 및 오류 처리 포함.
     """
     print(f"[자막 검색] 영상 ID: {video_id}")
@@ -173,13 +173,13 @@ def get_transcript(video_id, proxy_url=None):
         
     except NoTranscriptFound:
         print(f"[자막 검색] 자막 없음: {video_id}")
-        return None
+        return None, 0
     except TranscriptsDisabled:
         print(f"[자막 검색] 자막 비활성화: {video_id}")
-        return None
+        return None, 0
     except Exception as e:
         print(f"[자막 검색] 오류 발생: {e}")
-        return None
+        return None, 0
 
     # 자막 검색 우선순위 정의
     search_priorities = [
@@ -224,7 +224,7 @@ def get_transcript(video_id, proxy_url=None):
             continue
 
     print(f"[자막 검색] 모든 시도 실패: {video_id}")
-    return None
+    return None, 0
 
 def find_korean_transcript_direct(transcript_list):
     """한국어 자막을 직접 검색"""
@@ -264,7 +264,7 @@ def get_first_available_transcript(transcript_list):
 
 def extract_transcript_text(transcript, video_id):
     """
-    자막 객체에서 텍스트를 안전하게 추출합니다.
+    자막 객체에서 텍스트와 세그먼트 수를 안전하게 추출합니다.
     """
     try:
         print(f"[자막 추출] 자막 데이터 가져오는 중...")
@@ -272,9 +272,10 @@ def extract_transcript_text(transcript, video_id):
         
         if not fetched_transcript:
             print(f"[자막 추출] 빈 자막 데이터")
-            return None
+            return None, 0
         
-        print(f"[자막 추출] 자막 세그먼트 수: {len(fetched_transcript)}")
+        segment_count = len(fetched_transcript)
+        print(f"[자막 추출] 자막 세그먼트 수: {segment_count}")
         
         # 자막 조각들을 텍스트로 변환
         text_parts = []
@@ -292,7 +293,7 @@ def extract_transcript_text(transcript, video_id):
         
         if not text_parts:
             print(f"[자막 추출] 추출된 텍스트가 없음")
-            return None
+            return None, 0
         
         full_transcript = " ".join(text_parts)
         print(f"[자막 추출] 완료 - 총 {len(full_transcript)} 문자")
@@ -301,8 +302,8 @@ def extract_transcript_text(transcript, video_id):
         sample_text = full_transcript[:200] + "..." if len(full_transcript) > 200 else full_transcript
         print(f"[자막 추출] 텍스트 샘플: {sample_text}")
         
-        return full_transcript
+        return full_transcript, segment_count
         
     except Exception as e:
         print(f"[자막 추출] 오류 발생: {e}")
-        return None
+        return None, 0

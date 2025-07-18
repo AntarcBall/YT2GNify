@@ -176,8 +176,8 @@ class App(tk.Tk):
 
     def fetch_videos_thread(self):
         try:
-            videos = youtube_helper.get_videos_from_channel(self.channel_url, self.include_shorts.get())
-            self.q.put(("videos_fetched", videos))
+            self.all_videos = youtube_helper.get_videos_from_channel(self.channel_url, self.include_shorts.get())
+            self.q.put(("videos_fetched", self.all_videos[:30]))
         except Exception as e:
             self.q.put(("error", f"영상 목록 로딩 실패: {e}"))
 
@@ -204,10 +204,28 @@ class App(tk.Tk):
         
         ttk.Label(scene2, text="* Ctrl 또는 Shift 키를 사용하여 여러 영상을 선택할 수 있습니다.").pack(pady=5, anchor='w')
 
-        self.confirm_btn2 = ttk.Button(scene2, text="선택한 영상 분석 시작", command=self.start_processing)
-        self.confirm_btn2.pack(pady=10, ipady=5)
+        button_frame = ttk.Frame(scene2)
+        button_frame.pack(fill='x', pady=10)
+
+        self.confirm_btn2 = ttk.Button(button_frame, text="선택한 영상 분석 시작", command=self.start_processing)
+        self.confirm_btn2.pack(side="left", expand=True, fill="x", ipady=5, padx=(0, 5))
+
+        self.load_more_btn = ttk.Button(button_frame, text="추가 로드", command=self.load_more_videos)
+        self.load_more_btn.pack(side="right", expand=True, fill="x", ipady=5, padx=(5, 0))
         
+        if len(self.all_videos) <= 30:
+            self.load_more_btn.config(state="disabled")
+            
         return scene2
+
+    def load_more_videos(self):
+        currently_loaded = len(self.tree.get_children())
+        remaining_videos = self.all_videos[currently_loaded:]
+        
+        for video in remaining_videos:
+            self.tree.insert("", "end", values=(video['title'], video['duration']), iid=video['id'])
+            
+        self.load_more_btn.config(state="disabled")
 
     def start_processing(self):
         selected_ids = self.tree.selection()
@@ -240,14 +258,22 @@ class App(tk.Tk):
             self.q.put(("log", f"[{i+1}/{total}] '{video_title}' 영상 처리 시작..."))
             try:
                 self.q.put(("log", "  - 스크립트 추출 중..."))
-                transcript = youtube_helper.get_transcript(video_id)
+                transcript, segment_count = youtube_helper.get_transcript(video_id)
                 if not transcript:
                     self.q.put(("log", f"  - 경고: 스크립트를 찾을 수 없어 건너뜁니다."))
                     continue
 
+                self.q.put(("log", f"  - 자막 세그먼트 수: {segment_count}"))
+                if segment_count > 300:
+                    self.q.put(("log", ">>> 주목: 세그먼트가 300개를 초과하여 Gemini 처리 진행도를 표시합니다."))
+
                 self.q.put(("log", "  - Gemini API로 내용 가공 중..."))
                 prompt_with_title = f"영상 제목: {video_title}\n\n{self.user_prompt}"
-                processed_content = gemini_helper.process_text_with_gemini(transcript, prompt_with_title)
+                
+                if segment_count > 300:
+                    processed_content = gemini_helper.process_text_with_gemini(transcript, prompt_with_title, progress_callback=lambda p: self.q.put(("progress", p)))
+                else:
+                    processed_content = gemini_helper.process_text_with_gemini(transcript, prompt_with_title)
 
                 self.q.put(("log", "  - Obsidian 노트 저장 중..."))
                 file_helper.save_as_obsidian_note(self.obsidian_path, processed_content)
@@ -262,7 +288,12 @@ class App(tk.Tk):
         try:
             if hasattr(self, 'progress_text') and self.progress_text.winfo_exists():
                 self.progress_text.config(state="normal")
-                self.progress_text.insert(tk.END, message + "\n")
+                if isinstance(message, tuple) and message[0] == 'progress':
+                    # 마지막 줄을 캐리지 리턴으로 덮어쓰기
+                    self.progress_text.delete("end-1l", "end")
+                    self.progress_text.insert(tk.END, f"  - Gemini 처리 진행도: {message[1]}%\r")
+                else:
+                    self.progress_text.insert(tk.END, message + "\n")
                 self.progress_text.config(state="disabled")
                 self.progress_text.see(tk.END)
         except Exception as e:
@@ -280,6 +311,8 @@ class App(tk.Tk):
                     self.confirm_btn1.config(state="normal", text="영상 목록 불러오기")
             elif msg_type == "log":
                 self.log_message(data)
+            elif msg_type == "progress":
+                self.log_message(("progress", data))
             elif msg_type == "done":
                 self.log_message(f"\n--- {data} ---")
                 messagebox.showinfo("완료", data)

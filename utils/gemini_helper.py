@@ -21,10 +21,11 @@ def load_gemini_model_from_config():
     except (FileNotFoundError, json.JSONDecodeError):
         return "gemini-1.5-flash" # 파일이 없거나 오류 발생 시 기본값
 
-def process_text_with_gemini(transcript, user_prompt):
+def process_text_with_gemini(transcript, user_prompt, progress_callback=None):
     """
     스크립트와 사용자 프롬프트를 조합하여 Gemini API에 요청하고,
     가공된 텍스트 결과를 반환합니다.
+    진행 상황을 보고하기 위한 콜백 함수를 지원합니다.
     """
     model_name = load_gemini_model_from_config()
     print(f"[Gemini] Using model: {model_name}") # 사용할 모델 이름 출력
@@ -39,5 +40,14 @@ def process_text_with_gemini(transcript, user_prompt):
     --- 원본 스크립트 끝 ---
     """
 
+    # Gemini API는 현재 스트리밍 응답을 통한 점진적 진행도 콜백을 직접 제공하지 않음
+    # 따라서, 여기서는 요청 전후로 콜백을 호출하는 형태로 단순화하여 구현
+    if progress_callback:
+        progress_callback(0) # 시작
+
     response = model.generate_content(prompt)
+    
+    if progress_callback:
+        progress_callback(100) # 완료
+        
     return response.text
