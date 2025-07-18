@@ -9,9 +9,32 @@ import json
 import os
 from utils import youtube_helper, gemini_helper, file_helper
 
+def load_config(filepath="config.json"):
+    """JSON 파일에서 설정을 로드합니다."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, filepath)
+    defaults = {
+        "font_size": 12, 
+        "theme": "dark",
+        "obsidian_path": "C:/Users/bounc/OneDrive/문서/SummerVCT/Notes"
+    }
+
+    if not os.path.exists(config_path):
+        return defaults
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            return {
+                "font_size": config.get("font_size", defaults["font_size"]),
+                "theme": config.get("theme", defaults["theme"]),
+                "obsidian_path": config.get("obsidian_path", defaults["obsidian_path"])
+            }
+    except (json.JSONDecodeError, IOError):
+        return defaults
+
 def load_prompt_from_json(filepath="default_prompt.json"):
     """JSON 파일에서 기본 프롬프트를 로드합니다."""
-    # 스크립트가 있는 디렉토리에서 JSON 파일 찾기
     script_dir = os.path.dirname(os.path.abspath(__file__))
     json_path = os.path.join(script_dir, filepath)
     
@@ -29,6 +52,7 @@ def load_prompt_from_json(filepath="default_prompt.json"):
 
 # --- 기본 설정 ---
 DEFAULT_PROMPT = load_prompt_from_json()
+CONFIG = load_config()
 
 class App(tk.Tk):
     def __init__(self):
@@ -37,8 +61,9 @@ class App(tk.Tk):
         self.geometry("1024x768")
 
         # --- UI 상태 변수 ---
-        self.font_size = 12
-        self.is_dark_mode = tk.BooleanVar(value=True)  # 기본 다크 모드
+        self.font_size = CONFIG['font_size']
+        self.is_dark_mode = tk.BooleanVar(value=(CONFIG['theme'] == 'dark'))
+        self.include_shorts = tk.BooleanVar(value=False)
         
         # --- 스타일 설정 ---
         self.style = ttk.Style(self)
@@ -49,6 +74,7 @@ class App(tk.Tk):
 
         self.current_scene = None
         self.current_scene = self.create_scene1()
+        self.update_styles() # 초기 다크모드 적용
 
     def update_styles(self):
         """UI의 폰트와 색상 테마를 업데이트합니다."""
@@ -70,22 +96,15 @@ class App(tk.Tk):
         self.style.configure('TButton', background=btn_bg, foreground=fg_color, font=current_font)
         self.style.map('TButton', background=[('active', '#6E6E6E' if self.is_dark_mode.get() else '#C0C0C0')])
         self.style.configure('TEntry', fieldbackground=entry_bg, foreground=fg_color, insertcolor=fg_color)
-        self.style.configure('Treeview', background=tree_bg, fieldbackground=tree_bg, foreground=fg_color)
+        self.style.configure('Treeview', background=tree_bg, fieldbackground=tree_bg, foreground=fg_color, rowheight=self.font_size + 10)
         self.style.configure('Treeview.Heading', background=tree_heading_bg, foreground=fg_color, font=heading_font)
         self.style.map('Treeview.Heading', background=[('active', '#6E6E6E' if self.is_dark_mode.get() else '#D0D0D0')])
 
-        # Only configure widgets if they exist and are valid
         if hasattr(self, 'prompt_text') and self.prompt_text.winfo_exists():
-            try:
-                self.prompt_text.config(bg=entry_bg, fg=fg_color, insertbackground=fg_color, font=current_font)
-            except tk.TclError:
-                pass  # Widget may have been destroyed
+            self.prompt_text.config(bg=entry_bg, fg=fg_color, insertbackground=fg_color, font=current_font)
         
         if hasattr(self, 'progress_text') and self.progress_text.winfo_exists():
-            try:
-                self.progress_text.config(bg=entry_bg, fg=fg_color, font=current_font)
-            except tk.TclError:
-                pass  # Widget may have been destroyed
+            self.progress_text.config(bg=entry_bg, fg=fg_color, font=current_font)
             
     def change_font_size(self, delta):
         new_size = self.font_size + delta
@@ -109,6 +128,7 @@ class App(tk.Tk):
         ttk.Button(control_frame, text="글씨 작게", command=lambda: self.change_font_size(-1)).pack(side="left", padx=5)
         ttk.Button(control_frame, text="글씨 크게", command=lambda: self.change_font_size(1)).pack(side="left", padx=5)
         ttk.Checkbutton(control_frame, text="다크 모드", variable=self.is_dark_mode, command=self.update_styles).pack(side="left", padx=10)
+        ttk.Checkbutton(control_frame, text="Shorts 영상 포함", variable=self.include_shorts).pack(side="left", padx=10)
 
         main_content_frame = ttk.Frame(scene1)
         main_content_frame.pack(fill="both", expand=True)
@@ -123,7 +143,7 @@ class App(tk.Tk):
         path_frame.pack(fill="x", pady=(0, 15))
         self.path_entry = ttk.Entry(path_frame)
         self.path_entry.pack(side="left", fill="x", expand=True)
-        self.path_entry.insert(0, 'C:/Users/bounc/문서/SummerVCT/Notes')
+        self.path_entry.insert(0, CONFIG.get('obsidian_path', ''))
         ttk.Button(path_frame, text="경로 선택", command=self.browse_path).pack(side="left", padx=(5, 0))
 
         ttk.Label(main_content_frame, text="Gemini 프롬프트:").pack(pady=(0, 5), anchor='w')
@@ -156,7 +176,7 @@ class App(tk.Tk):
 
     def fetch_videos_thread(self):
         try:
-            videos = youtube_helper.get_videos_from_channel(self.channel_url)
+            videos = youtube_helper.get_videos_from_channel(self.channel_url, self.include_shorts.get())
             self.q.put(("videos_fetched", videos))
         except Exception as e:
             self.q.put(("error", f"영상 목록 로딩 실패: {e}"))

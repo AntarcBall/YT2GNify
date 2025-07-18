@@ -65,9 +65,10 @@ def get_channel_id_from_url(url):
                 return None # 검색 실패 시 None 반환
     return None
 
-def get_videos_from_channel(channel_url):
+def get_videos_from_channel(channel_url, include_shorts=False):
     """
-    채널의 모든 영상 목록과 각 영상의 길이를 가져와 반환합니다. (안정성 강화)
+    채널의 모든 영상 목록과 각 영상의 길이를 가져와 반환합니다.
+    include_shorts 파라미터로 Shorts 영상 포함 여부를 제어합니다.
     """
     global LAST_FETCHED_VIDEOS
     
@@ -77,9 +78,8 @@ def get_videos_from_channel(channel_url):
 
     try:
         res = youtube.channels().list(id=channel_id, part='contentDetails').execute()
-        # 'items' 키 존재 및 리스트가 비어있는지 확인
         if not res.get('items'):
-            raise ValueError(f"채널 ID '{channel_id}'에 대한 정보를 찾을 수 없습니다. 채널이 비공개이거나 존재하지 않을 수 있습니다.")
+            raise ValueError(f"채널 ID '{channel_id}'에 대한 정보를 찾을 수 없습니다.")
         
         playlist_id = res['items'][0]['contentDetails']['relatedPlaylists']['uploads']
     except Exception as e:
@@ -96,20 +96,24 @@ def get_videos_from_channel(channel_url):
             pageToken=next_page_token
         ).execute()
         
-        # 'items'가 응답에 있는지 확인하고, 비공개/삭제 영상을 안전하게 건너뜀
         for item in res.get('items', []):
-            if item.get('snippet', {}).get('resourceId', {}).get('videoId'):
-                video_id = item['snippet']['resourceId']['videoId']
+            snippet = item.get('snippet', {})
+            title = snippet.get('title', "")
+            
+            # Shorts 영상 필터링
+            if not include_shorts and title.strip().endswith('#shorts'):
+                continue
+
+            if snippet.get('resourceId', {}).get('videoId'):
+                video_id = snippet['resourceId']['videoId']
                 video_ids.append(video_id)
-                video_titles[video_id] = item['snippet']['title']
+                video_titles[video_id] = title
 
         next_page_token = res.get('nextPageToken')
         if not next_page_token:
             break
     
-    # --- 영상 길이 정보 가져오기 ---
     videos = []
-    # API는 한 번에 최대 50개의 ID를 처리할 수 있으므로, 50개씩 묶어서 요청
     for i in range(0, len(video_ids), 50):
         chunk_ids = video_ids[i:i+50]
         try:
@@ -120,7 +124,6 @@ def get_videos_from_channel(channel_url):
 
             for item in video_details_res.get('items', []):
                 video_id = item['id']
-                # 일부 영상은 duration 정보가 없을 수 있음
                 duration_iso = item.get('contentDetails', {}).get('duration', 'PT0S')
                 duration_formatted = parse_iso8601_duration(duration_iso)
                 
@@ -132,8 +135,6 @@ def get_videos_from_channel(channel_url):
         except Exception as e:
             print(f"영상 길이 정보를 가져오는 중 오류 발생 (ID: {chunk_ids}): {e}")
 
-
-    # 원본 순서를 유지하기 위해 video_ids 순서대로 정렬
     videos_dict = {v['id']: v for v in videos}
     sorted_videos = [videos_dict[vid_id] for vid_id in video_ids if vid_id in videos_dict]
 
