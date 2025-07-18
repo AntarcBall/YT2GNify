@@ -101,7 +101,7 @@ def get_videos_from_channel(channel_url, include_shorts=False):
             title = snippet.get('title', "")
             
             # Shorts 영상 필터링
-            if not include_shorts and title.strip().endswith('#shorts'):
+            if not include_shorts and title.strip().endswith('#비밀치트키'):
                 continue
 
             if snippet.get('resourceId', {}).get('videoId'):
