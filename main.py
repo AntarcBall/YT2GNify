@@ -64,6 +64,7 @@ class App(tk.Tk):
 
         # --- UI 상태 변수 ---
         self.font_size = CONFIG['font_size']
+        self.batch_size = CONFIG['gemini_batch_size']
         self.is_dark_mode = tk.BooleanVar(value=(CONFIG['theme'] == 'dark'))
         self.include_shorts = tk.BooleanVar(value=False)
         
@@ -178,8 +179,14 @@ class App(tk.Tk):
 
     def fetch_videos_thread(self):
         try:
-            self.all_videos = youtube_helper.get_videos_from_channel(self.channel_url, self.include_shorts.get())
-            self.q.put(("videos_fetched", self.all_videos[:30]))
+            # 1. Get all video IDs and titles first (fast)
+            self.all_videos_basic_info = youtube_helper.get_videos_from_channel(self.channel_url, self.include_shorts.get())
+            
+            # 2. Get details for the first batch
+            initial_batch = self.all_videos_basic_info[:self.batch_size]
+            self.detailed_videos = youtube_helper.get_details_for_videos(initial_batch)
+            
+            self.q.put(("videos_fetched", self.detailed_videos))
         except Exception as e:
             self.q.put(("error", f"영상 목록 로딩 실패: {e}"))
 
@@ -189,12 +196,14 @@ class App(tk.Tk):
 
         ttk.Label(scene2, text="처리할 영상을 선택하세요.", font=("Helvetica", int(self.font_size*1.3), "bold")).pack(pady=10, anchor='w')
 
-        cols = ("제목", "영상 길이")
+        cols = ("제목", "영상 길이", "자막")
         self.tree = ttk.Treeview(scene2, columns=cols, show="headings")
         self.tree.heading("제목", text="영상 제목")
         self.tree.heading("영상 길이", text="영상 길이")
-        self.tree.column("제목", width=600)
+        self.tree.heading("자막", text="자막")
+        self.tree.column("제목", width=550)
         self.tree.column("영상 길이", width=100, anchor='center')
+        self.tree.column("자막", width=50, anchor='center')
         self.tree.pack(fill="both", expand=True, pady=10)
 
         scrollbar = ttk.Scrollbar(self.tree, orient="vertical", command=self.tree.yview)
@@ -202,7 +211,7 @@ class App(tk.Tk):
         scrollbar.pack(side='right', fill='y')
 
         for video in videos:
-            self.tree.insert("", "end", values=(video['title'], video['duration']), iid=video['id'])
+            self.tree.insert("", "end", values=(video['title'], video['duration'], video.get('caption', '')), iid=video['id'])
         
         ttk.Label(scene2, text="* Ctrl 또는 Shift 키를 사용하여 여러 영상을 선택할 수 있습니다.").pack(pady=5, anchor='w')
 
@@ -215,19 +224,37 @@ class App(tk.Tk):
         self.load_more_btn = ttk.Button(button_frame, text="추가 로드", command=self.load_more_videos)
         self.load_more_btn.pack(side="right", expand=True, fill="x", ipady=5, padx=(5, 0))
         
-        if len(self.all_videos) <= 30:
+        if len(self.all_videos_basic_info) <= len(self.detailed_videos):
             self.load_more_btn.config(state="disabled")
             
         return scene2
 
     def load_more_videos(self):
-        currently_loaded = len(self.tree.get_children())
-        remaining_videos = self.all_videos[currently_loaded:]
+        currently_loaded_count = len(self.detailed_videos)
         
-        for video in remaining_videos:
-            self.tree.insert("", "end", values=(video['title'], video['duration']), iid=video['id'])
-            
-        self.load_more_btn.config(state="disabled")
+        # Determine the next batch to fetch
+        next_batch_to_fetch = self.all_videos_basic_info[currently_loaded_count : currently_loaded_count + self.batch_size]
+        
+        if not next_batch_to_fetch:
+            self.load_more_btn.config(state="disabled")
+            return
+
+        # Get details for the next batch
+        self.load_more_btn.config(state="disabled", text="로딩 중...")
+        threading.Thread(target=self.load_more_thread, args=(next_batch_to_fetch,), daemon=True).start()
+
+    def load_more_thread(self, videos_to_detail):
+        newly_detailed_videos = youtube_helper.get_details_for_videos(videos_to_detail)
+        self.q.put(("more_videos_loaded", newly_detailed_videos))
+
+    def append_more_videos(self, new_videos):
+        self.detailed_videos.extend(new_videos)
+        for video in new_videos:
+            self.tree.insert("", "end", values=(video['title'], video['duration'], video.get('caption', '')), iid=video['id'])
+        
+        self.load_more_btn.config(state="normal", text="추가 로드")
+        if len(self.detailed_videos) >= len(self.all_videos_basic_info):
+            self.load_more_btn.config(state="disabled")
 
     def start_processing(self):
         selected_ids = self.tree.selection()
@@ -235,8 +262,7 @@ class App(tk.Tk):
             messagebox.showerror("선택 오류", "하나 이상의 영상을 선택하세요.")
             return
         
-        all_videos = youtube_helper.LAST_FETCHED_VIDEOS
-        self.selected_videos = [v for v in all_videos if v['id'] in selected_ids]
+        self.selected_videos = [v for v in self.detailed_videos if v['id'] in selected_ids]
         
         self.switch_scene(self.create_scene3)
         threading.Thread(target=self.process_videos_thread, daemon=True).start()
@@ -254,7 +280,7 @@ class App(tk.Tk):
 
     def process_videos_thread(self):
         total = len(self.selected_videos)
-        batch_size = CONFIG.get("gemini_batch_size", 30)
+        batch_size = self.batch_size
         
         video_map = {v['id']: v for v in self.selected_videos}
 
@@ -328,6 +354,8 @@ class App(tk.Tk):
             msg_type, data = self.q.get_nowait()
             if msg_type == "videos_fetched":
                 self.switch_scene(self.create_scene2, data)
+            elif msg_type == "more_videos_loaded":
+                self.append_more_videos(data)
             elif msg_type == "error":
                 messagebox.showerror("오류", data)
                 if hasattr(self, 'confirm_btn1'):

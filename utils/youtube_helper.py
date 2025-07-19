@@ -31,6 +31,45 @@ def parse_iso8601_duration(duration_str):
     except:
         return "00:00" # 기간 파싱 오류 시 기본값
 
+def check_manual_caption_availability(video_id):
+    """
+    영상 ID에 대해 수동으로 생성된 한국어 및 영어 자막이 있는지 확인합니다.
+    반환값: "EK" (영어, 한국어), "E" (영어), "K" (한국어), "" (없음)
+    """
+    try:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        
+        has_korean = False
+        try:
+            # 한국어 수동 자막 확인
+            transcript_list.find_manually_created_transcript(['ko', 'ko-KR', 'kor'])
+            has_korean = True
+        except NoTranscriptFound:
+            pass
+
+        has_english = False
+        try:
+            # 영어 수동 자막 확인
+            transcript_list.find_manually_created_transcript(['en', 'en-US', 'en-GB'])
+            has_english = True
+        except NoTranscriptFound:
+            pass
+
+        if has_korean and has_english:
+            return "EK"
+        elif has_english:
+            return "E"
+        elif has_korean:
+            return "K"
+        else:
+            return ""
+            
+    except (NoTranscriptFound, TranscriptsDisabled):
+        return ""
+    except Exception as e:
+        print(f"자막 확인 중 오류 발생 (ID: {video_id}): {e}")
+        return ""
+
 def get_channel_id_from_url(url):
     """
     다양한 형태의 유튜브 URL에서 채널 ID를 안정적으로 추출합니다.
@@ -67,8 +106,8 @@ def get_channel_id_from_url(url):
 
 def get_videos_from_channel(channel_url, include_shorts=False):
     """
-    채널의 모든 영상 목록과 각 영상의 길이를 가져와 반환합니다.
-    include_shorts 파라미터로 Shorts 영상 포함 여부를 제어합니다.
+    채널의 모든 영상 목록(ID와 제목)을 가져와 반환합니다.
+    상세 정보(길이, 자막)는 별도 함수로 가져옵니다.
     """
     global LAST_FETCHED_VIDEOS
     
@@ -101,7 +140,7 @@ def get_videos_from_channel(channel_url, include_shorts=False):
             title = snippet.get('title', "")
             
             # Shorts 영상 필터링
-            if not include_shorts and title.strip().endswith('#비밀치트키'):
+            if not include_shorts and title.strip().endswith('#shorts'):
                 continue
 
             if snippet.get('resourceId', {}).get('videoId'):
@@ -113,7 +152,22 @@ def get_videos_from_channel(channel_url, include_shorts=False):
         if not next_page_token:
             break
     
-    videos = []
+    videos = [{'id': vid, 'title': video_titles.get(vid, "제목 없음")} for vid in video_ids]
+    
+    LAST_FETCHED_VIDEOS = videos
+    return videos
+
+def get_details_for_videos(videos_to_detail):
+    """
+    주어진 영상 목록에 대해 길이와 자막 정보를 가져와 추가합니다.
+    """
+    if not videos_to_detail:
+        return []
+
+    video_ids = [v['id'] for v in videos_to_detail]
+    
+    # Get durations in batches of 50
+    durations = {}
     for i in range(0, len(video_ids), 50):
         chunk_ids = video_ids[i:i+50]
         try:
@@ -121,25 +175,24 @@ def get_videos_from_channel(channel_url, include_shorts=False):
                 id=','.join(chunk_ids),
                 part='contentDetails'
             ).execute()
-
             for item in video_details_res.get('items', []):
-                video_id = item['id']
-                duration_iso = item.get('contentDetails', {}).get('duration', 'PT0S')
-                duration_formatted = parse_iso8601_duration(duration_iso)
-                
-                videos.append({
-                    'id': video_id,
-                    'title': video_titles.get(video_id, "제목 없음"),
-                    'duration': duration_formatted
-                })
+                durations[item['id']] = parse_iso8601_duration(item.get('contentDetails', {}).get('duration', 'PT0S'))
         except Exception as e:
             print(f"영상 길이 정보를 가져오는 중 오류 발생 (ID: {chunk_ids}): {e}")
 
-    videos_dict = {v['id']: v for v in videos}
-    sorted_videos = [videos_dict[vid_id] for vid_id in video_ids if vid_id in videos_dict]
-
-    LAST_FETCHED_VIDEOS = sorted_videos
-    return sorted_videos
+    # Get caption status one by one (this is slow)
+    detailed_videos = []
+    for video in videos_to_detail:
+        video_id = video['id']
+        print(f"Checking captions for video ID: {video_id}")
+        caption_status = check_manual_caption_availability(video_id)
+        
+        detailed_video = video.copy()
+        detailed_video['duration'] = durations.get(video_id, "00:00")
+        detailed_video['caption'] = caption_status
+        detailed_videos.append(detailed_video)
+        
+    return detailed_videos
 
 def get_transcript(video_id, proxy_url=None):
     """
