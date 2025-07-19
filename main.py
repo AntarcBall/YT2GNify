@@ -7,6 +7,9 @@ import threading
 import queue
 import json
 import os
+from datetime import datetime
+import time
+import sys
 from utils import youtube_helper, gemini_helper, file_helper
 
 def load_config(filepath="config.json"):
@@ -19,7 +22,9 @@ def load_config(filepath="config.json"):
         "obsidian_path": "C:/Users/bounc/OneDrive/문서/SummerVCT/Notes",
         "gemini_batch_size": 30,
         "youtube_url": "https://www.youtube.com/@slow_doctor",
-        "min_video_duration": 120 # Default to 2 minutes (120 seconds)
+        "min_video_duration": 120, # Default to 2 minutes (120 seconds)
+        "run_ip_test": True, # Default to True
+        "gemini_model": "gemini-1.5-flash" # Default Gemini model
     }
 
     if not os.path.exists(config_path):
@@ -34,7 +39,9 @@ def load_config(filepath="config.json"):
                 "obsidian_path": config.get("obsidian_path", defaults["obsidian_path"]),
                 "gemini_batch_size": config.get("gemini_batch_size", defaults["gemini_batch_size"]),
                 "youtube_url": config.get("youtube_url", defaults["youtube_url"]),
-                "min_video_duration": config.get("min_video_duration", defaults["min_video_duration"])
+                "min_video_duration": config.get("min_video_duration", defaults["min_video_duration"]),
+                "run_ip_test": config.get("run_ip_test", defaults["run_ip_test"]),
+                "gemini_model": config.get("gemini_model", defaults["gemini_model"])
             }
     except (json.JSONDecodeError, IOError):
         return defaults
@@ -64,13 +71,15 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("YouTube 스크립트 분석기")
-        self.geometry("1024x768")
+        self.geometry("1324x768")
 
         # --- UI 상태 변수 ---
         self.font_size = CONFIG['font_size']
         self.is_dark_mode = tk.BooleanVar(value=(CONFIG['theme'] == 'dark'))
         self.include_shorts = tk.BooleanVar(value=False)
         self.min_duration_seconds = tk.IntVar(value=CONFIG.get('min_video_duration', 120)) # Default to 120 seconds (2 minutes)
+        self.keep_original_title = tk.BooleanVar(value=False) # New: Keep original title checkbox
+        self.gemini_model_var = tk.StringVar(value=CONFIG.get('gemini_model', 'gemini-1.5-flash')) # New: Gemini model selection
         
         # --- 스타일 설정 ---
         self.style = ttk.Style(self)
@@ -142,6 +151,14 @@ class App(tk.Tk):
         ttk.Button(control_frame, text="글씨 크게", command=lambda: self.change_font_size(1)).pack(side="left", padx=5)
         ttk.Checkbutton(control_frame, text="다크 모드", variable=self.is_dark_mode, command=self.update_styles).pack(side="left", padx=10)
         ttk.Checkbutton(control_frame, text="Shorts 영상 포함", variable=self.include_shorts).pack(side="left", padx=10)
+        ttk.Checkbutton(control_frame, text="제목 원본 유지", variable=self.keep_original_title).pack(side="left", padx=10)
+
+        # Gemini 모델 선택 라디오 버튼
+        model_frame = ttk.Frame(control_frame)
+        model_frame.pack(side="left", padx=10)
+        ttk.Label(model_frame, text="Gemini 모델:").pack(side="left")
+        ttk.Radiobutton(model_frame, text="1.5 Flash", variable=self.gemini_model_var, value="gemini-1.5-flash").pack(side="left", padx=2)
+        ttk.Radiobutton(model_frame, text="2.5 Flash", variable=self.gemini_model_var, value="gemini-2.5-flash").pack(side="left", padx=2)
 
         # 최소 영상 길이 설정 (슬라이더)
         duration_frame = ttk.Frame(control_frame)
@@ -288,19 +305,30 @@ class App(tk.Tk):
             for video in batch_videos:
                 video_id = video['id']
                 video_title = video['title']
+                video_duration_seconds = video.get('total_seconds', 0) # Initialize with default
+                processing_duration = 0 # Initialize with default
+
                 self.q.put(("log", f"  - '{video_title}' 스크립트 준비 중..."))
+                start_time = time.time() # 개별 영상 처리 시작 시간 기록
                 try:
                     transcript, _ = youtube_helper.get_transcript(video_id)
+                    end_time = time.time() # 개별 영상 처리 종료 시간 기록
+                    processing_duration = end_time - start_time
+                    
+                    speed_ratio = "N/A"
+                    if processing_duration > 0:
+                        speed_ratio = f"{video_duration_seconds / processing_duration:.2f}x"
+
                     if not transcript:
-                        self.q.put(("log", f"  - 경고: '{video_title}' 스크립트를 찾을 수 없어 건너뜁니다."))
+                        self.q.put(("log", f"  - 경고: '{video_title}' 스크립트를 찾을 수 없어 건너뜁니다. (처리 시간: {processing_duration:.2f}초)"))
                         continue
                     
                     prompt_with_title = f"영상 제목: {video_title}\n\n{self.user_prompt}"
                     full_prompt = f"{prompt_with_title}\n\n--- 원본 스크립트 ---\n{transcript}\n--- 원본 스크립트 끝 ---"
-                    tasks.append({"id": video_id, "task": full_prompt})
+                    tasks.append({"id": video_id, "task": full_prompt, "video_duration_seconds": video_duration_seconds, "processing_duration": processing_duration})
 
                 except Exception as e:
-                    self.q.put(("log", f"  - ✗ 오류: '{video_title}' 스크립트 추출 중 문제 발생 - {e}"))
+                    self.q.put(("log", f"  - ✗ 오류: '{video_title}' 스크립트 추출 중 문제 발생 - {e} (처리 시간: {processing_duration:.2f}초, 영상 길이: {video_duration_seconds}초)"))
 
             if not tasks:
                 self.q.put(("log", "--- 현재 배치에서 처리할 작업이 없습니다. ---"))
@@ -308,18 +336,24 @@ class App(tk.Tk):
 
             try:
                 self.q.put(("log", f"  - Gemini API로 {len(tasks)}개 작업 배치 요청..."))
-                results = gemini_helper.process_batch_with_gemini(tasks)
+                results = gemini_helper.process_batch_with_gemini(tasks, self.gemini_model_var.get())
                 
                 result_map = {res['id']: res['result'] for res in results}
 
                 for task in tasks:
                     video_id = task['id']
                     video_title = video_map[video_id]['title']
+                    video_duration_seconds = task['video_duration_seconds']
+                    processing_duration = task['processing_duration']
+
+                    speed_ratio = "N/A"
+                    if processing_duration > 0:
+                        speed_ratio = f"{video_duration_seconds / processing_duration:.2f}x"
                     
                     if video_id in result_map:
                         processed_content = result_map[video_id]
-                        self.q.put(("log", f"  - '{video_title}' 내용 가공 완료. 노트 저장 중..."))
-                        file_helper.save_as_obsidian_note(self.obsidian_path, processed_content)
+                        self.q.put(("log", f"  - '{video_title}' 내용 가공 완료. 노트 저장 중... (처리 속도: {speed_ratio})"))
+                        file_helper.save_as_obsidian_note(self.obsidian_path, processed_content, self.keep_original_title.get(), video_title)
                         self.q.put(("log", f"  - ✓ 완료: '{video_title}' 노트 생성 완료"))
                     else:
                         self.q.put(("log", f"  - ✗ 오류: '{video_title}' 처리 결과가 없습니다."))
@@ -374,16 +408,19 @@ if __name__ == "__main__":
         if not gemini_helper.GEMINI_API_KEY:
             raise ValueError("Gemini API 키가 설정되지 않았습니다. MYAPI.json 파일을 확인해주세요.")
         
-        # Gemini API 접근성 확인
-        is_accessible, message = gemini_helper.check_gemini_api()
-        if not is_accessible:
-            # API 접근 불가 시, 사용자에게 알리고 프로그램 종료
-            print(f"오류: {message}")
-            messagebox.showerror("API 연결 오류", f"{message}\n\nIP가 차단되었거나 네트워크 연결에 문제가 있을 수 있습니다. 프로그램을 종료합니다.")
-        else:
-            print(message) # API 접근 가능 메시지 출력
-            app = App()
-            app.mainloop()
+        # Gemini API 접근성 확인 (config.json 설정에 따름)
+        if CONFIG.get("run_ip_test", True):
+            is_accessible, message = gemini_helper.check_gemini_api()
+            if not is_accessible:
+                # API 접근 불가 시, 사용자에게 알리고 프로그램 종료
+                print(f"오류: {message}")
+                messagebox.showerror("API 연결 오류", f"{message}\n\nIP가 차단되었거나 네트워크 연결에 문제가 있을 수 있습니다. 프로그램을 종료합니다.")
+                sys.exit() # 프로그램 종료
+            else:
+                print(message) # API 접근 가능 메시지 출력
+        
+        app = App()
+        app.mainloop()
 
     except ValueError as e:
         print(f"오류: {e}")

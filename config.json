@@ -1,9 +1,10 @@
 {
-    "font_size": 14,
+    "font_size": 12,
     "theme": "dark",
     "gemini_model": "gemini-2.5-flash",
     "obsidian_path": "C:/Users/bounc/OneDrive/문서/GNifiedNotes",
-    "gemini_batch_size": 20,
-    "youtube_url": "https://www.youtube.com/@김포퍼",
-    "min_video_duration": 120
+    "gemini_batch_size": 100,
+    "youtube_url": "https://www.youtube.com/@Normaltic",
+    "min_video_duration": 120,
+    "run_ip_test": false
 }

@@ -32,17 +32,19 @@ def check_gemini_api():
     except Exception as e:
         return False, f"Failed to access Gemini API: {e}"
 
-def process_batch_with_gemini(tasks):
+def process_batch_with_gemini(tasks, model_name=None):
     """
     여러 작업을 순차적으로 Gemini API에 요청하고 진행 상황을 표시하며 결과를 반환합니다.
     
     Args:
         tasks (list): 각 항목이 {"id": "...", "task": "..."} 형태의 딕셔너리인 리스트
+        model_name (str, optional): 사용할 Gemini 모델 이름. None이면 config.json에서 로드합니다.
         
     Returns:
         list: 각 항목이 {"id": "...", "result": "..."} 형태의 딕셔너리인 리스트
     """
-    model_name = load_gemini_model_from_config()
+    if model_name is None:
+        model_name = load_gemini_model_from_config()
     model = genai.GenerativeModel(model_name)
     results = []
     total_tasks = len(tasks)

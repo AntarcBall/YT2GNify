@@ -25,52 +25,65 @@ def load_api_key(key_name="myapi", filepath="MYAPI.json"):
         print(f"경고: API 키 파일 로딩 실패 - {e}.")
         return None
 
+def _sanitize_filename(title):
+    """
+    주어진 문자열을 파일 이름으로 사용할 수 있도록 정리합니다.
+    """
+    # 마크다운 제목 제거 (예: # 제목 -> 제목)
+    sanitized_title = re.sub(r'^\s*#+\s*', '', title)
+    # 파일명으로 사용할 수 없는 문자 제거
+    sanitized_title = re.sub(r'[\\/*?:"<>|]', "", sanitized_title)
+    # 공백 및 연속된 하이픈을 단일 하이픈으로 변경
+    filename = re.sub(r'\s+', '-', sanitized_title)
+    filename = re.sub(r'-+', '-', filename).strip('-')
+    # 너무 길 경우 자르기 (예: 200자)
+    filename = (filename[:200]) if len(filename) > 200 else filename
+    return filename
+
 def generate_filename_from_content(content):
     """
     내용의 첫 줄을 기반으로 'a-b-c' 형태의 파일명을 생성합니다.
     """
     if not content:
-        return "untitled.md"
+        return "untitled"
         
-    # 내용의 첫 줄을 제목으로 가정 (마크다운 # 제거)
+    # 내용의 첫 줄을 제목으로 가정
     first_line = content.strip().split('\n')[0]
-    first_line = re.sub(r'^\s*#+\s*', '', first_line) # '# ' 같은 마크다운 제목 제거
-    
-    # 파일명으로 사용할 수 없는 문자 제거
-    sanitized_title = re.sub(r'[\\/*?:"<>|]', "", first_line)
-    
-    # 공백 및 연속된 하이픈을 단일 하이픈으로 변경
-    filename = re.sub(r'\s+', '-', sanitized_title)
-    filename = re.sub(r'-+', '-', filename).strip('-')
-    
-    # 너무 길 경우 자르기
-    filename = (filename[:50] + '..') if len(filename) > 50 else filename
-    
-    return f"{filename}.md" if filename else "untitled.md"
+    return _sanitize_filename(first_line)
 
-def save_as_obsidian_note(path, content):
+def save_as_obsidian_note(path, content, keep_original_title=False, original_title=""):
     """
     지정된 경로에 가공된 내용을 마크다운 파일로 저장합니다.
-    파일 이름은 내용에서 자동으로 생성됩니다.
+    파일 이름은 내용 또는 원본 제목에서 생성됩니다.
     """
     if not os.path.isdir(path):
         os.makedirs(path)
         print(f"'{path}' 폴더를 생성했습니다.")
 
-    filename = generate_filename_from_content(content)
+    base_filename = ""
+    if keep_original_title and original_title:
+        base_filename = _sanitize_filename(original_title)
+    
+    if not base_filename:
+        base_filename = generate_filename_from_content(content)
+
+    if not base_filename:
+        base_filename = "untitled"
+
+    filename = f"{base_filename}.md"
     file_path = os.path.join(path, filename)
 
     # 파일명 중복 방지
     counter = 1
     while os.path.exists(file_path):
-        base, ext = os.path.splitext(filename)
-        # 이미 카운터가 붙어있으면 제거하고 새로 붙임
-        base = re.sub(r'-\d+$', '', base)
-        file_path = os.path.join(path, f"{base}-{counter}{ext}")
+        # 기존 파일명에서 카운터 제거 (예: title-1.md -> title.md)
+        temp_base, ext = os.path.splitext(base_filename)
+        temp_base = re.sub(r'-\d+$', '', temp_base)
+        filename = f"{temp_base}-{counter}.md"
+        file_path = os.path.join(path, filename)
         counter += 1
 
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(content)
     
     print(f"파일 저장 완료: {file_path}")
-
