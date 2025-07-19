@@ -25,7 +25,8 @@ def load_config(filepath="config.json"):
         "youtube_url": "https://www.youtube.com/@slow_doctor",
         "min_video_duration": 120, # Default to 2 minutes (120 seconds)
         "run_ip_test": True, # Default to True
-        "gemini_model": "gemini-2.5-flash" # Default Gemini model
+        "gemini_model": "gemini-2.5-flash", # Default Gemini model
+        "list_load_batch_size": 30 # Default to 30
     }
 
     if not os.path.exists(config_path):
@@ -42,7 +43,8 @@ def load_config(filepath="config.json"):
                 "youtube_url": config.get("youtube_url", defaults["youtube_url"]),
                 "min_video_duration": config.get("min_video_duration", defaults["min_video_duration"]),
                 "run_ip_test": config.get("run_ip_test", defaults["run_ip_test"]),
-                "gemini_model": config.get("gemini_model", defaults["gemini_model"])
+                "gemini_model": config.get("gemini_model", defaults["gemini_model"]),
+                "list_load_batch_size": config.get("list_load_batch_size", defaults["list_load_batch_size"])
             }
     except (json.JSONDecodeError, IOError):
         return defaults
@@ -92,6 +94,10 @@ class App(tk.Tk):
         self.current_scene = None
         self.current_scene = self.create_scene1()
         self.update_styles() # 초기 다크모드 적용
+
+        self.all_videos = [] # 모든 로드된 영상을 저장할 리스트
+        self.next_page_token = None # 다음 페이지 로드를 위한 토큰
+        self.channel_url_for_batch = None # 현재 로드 중인 채널 URL
 
     def update_styles(self):
         """UI의 폰트와 색상 테마를 업데이트합니다."""
@@ -214,16 +220,27 @@ class App(tk.Tk):
             return
 
         self.confirm_btn1.config(state="disabled", text="불러오는 중...")
+        self.all_videos = [] # 새 채널 로드 시 초기화
+        self.next_page_token = None # 새 채널 로드 시 초기화
+        self.channel_url_for_batch = self.channel_url # 현재 로드 중인 채널 URL 저장
         threading.Thread(target=self.fetch_videos_thread, daemon=True).start()
 
     def fetch_videos_thread(self):
         try:
-            self.all_videos = youtube_helper.get_videos_from_channel(self.channel_url, self.include_shorts.get(), self.min_video_duration)
-            self.q.put(("videos_fetched", self.all_videos[:30]))
+            batch_size = CONFIG.get("list_load_batch_size", 30)
+            videos_batch, self.next_page_token = youtube_helper.get_videos_from_channel(
+                self.channel_url_for_batch, 
+                self.include_shorts.get(), 
+                self.min_video_duration, 
+                max_results=batch_size, 
+                page_token=self.next_page_token
+            )
+            self.all_videos.extend(videos_batch)
+            self.q.put(("videos_fetched", videos_batch))
         except Exception as e:
             self.q.put(("error", f"영상 목록 로딩 실패: {e}"))
 
-    def create_scene2(self, videos):
+    def create_scene2(self, videos_batch):
         scene2 = ttk.Frame(self, padding=(20, 20))
         scene2.pack(fill="both", expand=True)
 
@@ -241,7 +258,7 @@ class App(tk.Tk):
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side='right', fill='y')
 
-        for video in videos:
+        for video in videos_batch:
             self.tree.insert("", "end", values=(video['title'], video['duration']), iid=video['id'])
         
         ttk.Label(scene2, text="* Ctrl 또는 Shift 키를 사용하여 여러 영상을 선택할 수 있습니다.").pack(pady=5, anchor='w')
@@ -255,19 +272,30 @@ class App(tk.Tk):
         self.load_more_btn = ttk.Button(button_frame, text="추가 로드", command=self.load_more_videos)
         self.load_more_btn.pack(side="right", expand=True, fill="x", ipady=5, padx=(5, 0))
         
-        if len(self.all_videos) <= 30:
+        # 초기 로드 후 추가 로드 버튼 상태 업데이트
+        if not self.next_page_token:
             self.load_more_btn.config(state="disabled")
             
         return scene2
 
     def load_more_videos(self):
-        currently_loaded = len(self.tree.get_children())
-        remaining_videos = self.all_videos[currently_loaded:]
-        
-        for video in remaining_videos:
-            self.tree.insert("", "end", values=(video['title'], video['duration']), iid=video['id'])
-            
-        self.load_more_btn.config(state="disabled")
+        self.load_more_btn.config(state="disabled", text="로딩 중...")
+        threading.Thread(target=self._load_more_videos_thread, daemon=True).start()
+
+    def _load_more_videos_thread(self):
+        try:
+            batch_size = CONFIG.get("list_load_batch_size", 30)
+            videos_batch, self.next_page_token = youtube_helper.get_videos_from_channel(
+                self.channel_url_for_batch, 
+                self.include_shorts.get(), 
+                self.min_video_duration, 
+                max_results=batch_size, 
+                page_token=self.next_page_token
+            )
+            self.all_videos.extend(videos_batch)
+            self.q.put(("add_videos_to_tree", videos_batch))
+        except Exception as e:
+            self.q.put(("error", f"추가 영상 로딩 실패: {e}"))
 
     def start_processing(self):
         selected_ids = self.tree.selection()
@@ -275,8 +303,7 @@ class App(tk.Tk):
             messagebox.showerror("선택 오류", "하나 이상의 영상을 선택하세요.")
             return
         
-        all_videos = youtube_helper.LAST_FETCHED_VIDEOS
-        self.selected_videos = [v for v in all_videos if v['id'] in selected_ids]
+        self.selected_videos = [v for v in self.all_videos if v['id'] in selected_ids]
         
         self.switch_scene(self.create_scene3)
         threading.Thread(target=self.process_videos_thread, daemon=True).start()
@@ -368,10 +395,19 @@ class App(tk.Tk):
             msg_type, data = self.q.get_nowait()
             if msg_type == "videos_fetched":
                 self.switch_scene(self.create_scene2, data)
+            elif msg_type == "add_videos_to_tree":
+                for video in data:
+                    self.tree.insert("", "end", values=(video['title'], video['duration']), iid=video['id'])
+                if self.next_page_token:
+                    self.load_more_btn.config(state="normal", text="추가 로드")
+                else:
+                    self.load_more_btn.config(state="disabled", text="더 이상 영상 없음")
             elif msg_type == "error":
                 messagebox.showerror("오류", data)
                 if hasattr(self, 'confirm_btn1'):
                     self.confirm_btn1.config(state="normal", text="영상 목록 불러오기")
+                if hasattr(self, 'load_more_btn'):
+                    self.load_more_btn.config(state="normal", text="추가 로드") # 에러 발생 시 버튼 활성화
             elif msg_type == "log":
                 self.log_message(data)
             elif msg_type == "progress":

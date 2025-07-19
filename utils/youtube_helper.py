@@ -11,9 +11,6 @@ from .file_helper import load_api_key
 YOUTUBE_API_KEY = load_api_key("myapi")
 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
-# GUI에서 재사용하기 위해 마지막으로 불러온 영상 목록을 저장
-LAST_FETCHED_VIDEOS = []
-
 def parse_iso8601_duration(duration_str):
     """ISO 8601 형식의 기간을 'HH:MM:SS' 또는 'MM:SS' 형태로 변환합니다."""
     try:
@@ -65,14 +62,11 @@ def get_channel_id_from_url(url):
                 return None # 검색 실패 시 None 반환
     return None
 
-def get_videos_from_channel(channel_url, include_shorts=False, min_duration_seconds=0):
+def get_videos_from_channel(channel_url, include_shorts=False, min_duration_seconds=0, max_results=50, page_token=None):
     """
-    채널의 모든 영상 목록과 각 영상의 길이를 가져와 반환합니다.
-    include_shorts 파라미터로 Shorts 영상 포함 여부를 제어합니다.
-    min_duration_seconds 파라미터로 최소 영상 길이를 설정합니다.
+    채널의 영상 목록을 지정된 개수만큼 가져와 반환합니다.
+    page_token을 사용하여 다음 페이지를 가져올 수 있습니다.
     """
-    global LAST_FETCHED_VIDEOS
-    
     channel_id = get_channel_id_from_url(channel_url)
     if not channel_id:
         raise ValueError("유효한 채널 URL이 아니거나 채널 ID를 찾을 수 없습니다.")
@@ -88,34 +82,34 @@ def get_videos_from_channel(channel_url, include_shorts=False, min_duration_seco
 
     video_ids = []
     video_titles = {}
-    next_page_token = None
-    while True:
-        res = youtube.playlistItems().list(
-            playlistId=playlist_id,
-            part='snippet',
-            maxResults=50,
-            pageToken=next_page_token
-        ).execute()
+    
+    # 첫 번째 요청에서 maxResults를 사용하여 지정된 개수만큼만 가져옵니다.
+    # 이후 요청에서는 page_token을 사용하여 다음 페이지를 가져옵니다.
+    res = youtube.playlistItems().list(
+        playlistId=playlist_id,
+        part='snippet',
+        maxResults=max_results, # 요청된 max_results 사용
+        pageToken=page_token
+    ).execute()
+    
+    for item in res.get('items', []):
+        snippet = item.get('snippet', {})
+        title = snippet.get('title', "")
         
-        for item in res.get('items', []):
-            snippet = item.get('snippet', {})
-            title = snippet.get('title', "")
-            
-            # Shorts 영상 필터링
-            if not include_shorts and title.strip().endswith('#비밀치트키'):
-                continue
+        # Shorts 영상 필터링
+        if not include_shorts and title.strip().endswith('#비밀치트키'):
+            continue
 
-            if snippet.get('resourceId', {}).get('videoId'):
-                video_id = snippet['resourceId']['videoId']
-                video_ids.append(video_id)
-                video_titles[video_id] = title
+        if snippet.get('resourceId', {}).get('videoId'):
+            video_id = snippet['resourceId']['videoId']
+            video_ids.append(video_id)
+            video_titles[video_id] = title
 
-        next_page_token = res.get('nextPageToken')
-        if not next_page_token:
-            break
+    next_page_token = res.get('nextPageToken')
     
     videos = []
-    for i in range(0, len(video_ids), 50):
+    # video_ids가 50개 미만일 수도 있으므로 len(video_ids)를 사용
+    for i in range(0, len(video_ids), 50): 
         chunk_ids = video_ids[i:i+50]
         try:
             video_details_res = youtube.videos().list(
@@ -147,8 +141,7 @@ def get_videos_from_channel(channel_url, include_shorts=False, min_duration_seco
     videos_dict = {v['id']: v for v in videos}
     sorted_videos = [videos_dict[vid_id] for vid_id in video_ids if vid_id in videos_dict]
 
-    LAST_FETCHED_VIDEOS = sorted_videos
-    return sorted_videos
+    return sorted_videos, next_page_token
 
 def get_transcript(video_id, proxy_url=None):
     """
