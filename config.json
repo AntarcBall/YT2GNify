@@ -1,11 +1,11 @@
 {
-    "font_size": 12,
+    "font_size": 13,
     "theme": "dark",
     "gemini_model": "gemini-2.5-flash",
     "obsidian_path": "C:/Users/bounc/OneDrive/문서/GNifiedNotes",
-    "gemini_batch_size": 100,
+    "gemini_batch_size": 120,
     "youtube_url": "https://www.youtube.com/@Normaltic",
     "min_video_duration": 120,
     "run_ip_test": false,
-    "list_load_batch_size": 30
+    "list_load_batch_size": 100
 }
