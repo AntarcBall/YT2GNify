@@ -26,7 +26,7 @@ def check_gemini_api():
     Gemini API에 간단한 요청을 보내 접근성을 확인합니다.
     """
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         model.generate_content("test")
         return True, "Gemini API is accessible."
     except Exception as e:

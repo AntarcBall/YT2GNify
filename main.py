@@ -11,6 +11,8 @@ from datetime import datetime
 import pytz
 import time
 import sys
+
+sys.stdout.reconfigure(encoding='utf-8')
 from utils import youtube_helper, gemini_helper, file_helper
 
 def load_config(filepath="config.json"):
@@ -26,7 +28,9 @@ def load_config(filepath="config.json"):
         "min_video_duration": 120, # Default to 2 minutes (120 seconds)
         "run_ip_test": True, # Default to True
         "gemini_model": "gemini-2.5-flash", # Default Gemini model
-        "list_load_batch_size": 30 # Default to 30
+        "list_load_batch_size": 30, # Default to 30
+        "include_shorts": False, # Default to False
+        "keep_original_title": False # Default to False
     }
 
     if not os.path.exists(config_path):
@@ -44,7 +48,9 @@ def load_config(filepath="config.json"):
                 "min_video_duration": config.get("min_video_duration", defaults["min_video_duration"]),
                 "run_ip_test": config.get("run_ip_test", defaults["run_ip_test"]),
                 "gemini_model": config.get("gemini_model", defaults["gemini_model"]),
-                "list_load_batch_size": config.get("list_load_batch_size", defaults["list_load_batch_size"])
+                "list_load_batch_size": config.get("list_load_batch_size", defaults["list_load_batch_size"]),
+                "include_shorts": config.get("include_shorts", defaults["include_shorts"]),
+                "keep_original_title": config.get("keep_original_title", defaults["keep_original_title"])
             }
     except (json.JSONDecodeError, IOError):
         return defaults
@@ -79,10 +85,10 @@ class App(tk.Tk):
         # --- UI 상태 변수 ---
         self.font_size = CONFIG['font_size']
         self.is_dark_mode = tk.BooleanVar(value=(CONFIG['theme'] == 'dark'))
-        self.include_shorts = tk.BooleanVar(value=False)
-        self.min_duration_seconds = tk.IntVar(value=CONFIG.get('min_video_duration', 120)) # Default to 120 seconds (2 minutes)
-        self.keep_original_title = tk.BooleanVar(value=False) # New: Keep original title checkbox
-        self.gemini_model_var = tk.StringVar(value=CONFIG.get('gemini_model', 'gemini-2.5-flash')) # New: Gemini model selection
+        self.include_shorts = tk.BooleanVar(value=CONFIG.get('include_shorts', False))
+        self.min_duration_seconds = tk.IntVar(value=CONFIG.get('min_video_duration', 120))
+        self.keep_original_title = tk.BooleanVar(value=CONFIG.get('keep_original_title', False))
+        self.gemini_model_var = tk.StringVar(value=CONFIG.get('gemini_model', 'gemini-2.5-flash'))
         
         # --- 스타일 설정 ---
         self.style = ttk.Style(self)
