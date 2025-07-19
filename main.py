@@ -17,7 +17,8 @@ def load_config(filepath="config.json"):
         "font_size": 12, 
         "theme": "dark",
         "obsidian_path": "C:/Users/bounc/OneDrive/문서/SummerVCT/Notes",
-        "gemini_batch_size": 30
+        "gemini_batch_size": 30,
+        "youtube_url": "https://www.youtube.com/@slow_doctor"
     }
 
     if not os.path.exists(config_path):
@@ -30,7 +31,8 @@ def load_config(filepath="config.json"):
                 "font_size": config.get("font_size", defaults["font_size"]),
                 "theme": config.get("theme", defaults["theme"]),
                 "obsidian_path": config.get("obsidian_path", defaults["obsidian_path"]),
-                "gemini_batch_size": config.get("gemini_batch_size", defaults["gemini_batch_size"])
+                "gemini_batch_size": config.get("gemini_batch_size", defaults["gemini_batch_size"]),
+                "youtube_url": config.get("youtube_url", defaults["youtube_url"])
             }
     except (json.JSONDecodeError, IOError):
         return defaults
@@ -138,7 +140,7 @@ class App(tk.Tk):
         ttk.Label(main_content_frame, text="유튜브 채널 URL:").pack(pady=(0, 5), anchor='w')
         self.url_entry = ttk.Entry(main_content_frame)
         self.url_entry.pack(fill="x", pady=(0, 15))
-        self.url_entry.insert(0, "https://www.youtube.com/@slow_doctor")
+        self.url_entry.insert(0, CONFIG.get('youtube_url', ''))
 
         ttk.Label(main_content_frame, text="Obsidian 저장 경로:").pack(pady=(0, 5), anchor='w')
         path_frame = ttk.Frame(main_content_frame)
