@@ -8,6 +8,7 @@ import queue
 import json
 import os
 from datetime import datetime
+import pytz
 import time
 import sys
 from utils import youtube_helper, gemini_helper, file_helper
@@ -24,7 +25,7 @@ def load_config(filepath="config.json"):
         "youtube_url": "https://www.youtube.com/@slow_doctor",
         "min_video_duration": 120, # Default to 2 minutes (120 seconds)
         "run_ip_test": True, # Default to True
-        "gemini_model": "gemini-1.5-flash" # Default Gemini model
+        "gemini_model": "gemini-2.5-flash" # Default Gemini model
     }
 
     if not os.path.exists(config_path):
@@ -79,7 +80,7 @@ class App(tk.Tk):
         self.include_shorts = tk.BooleanVar(value=False)
         self.min_duration_seconds = tk.IntVar(value=CONFIG.get('min_video_duration', 120)) # Default to 120 seconds (2 minutes)
         self.keep_original_title = tk.BooleanVar(value=False) # New: Keep original title checkbox
-        self.gemini_model_var = tk.StringVar(value=CONFIG.get('gemini_model', 'gemini-1.5-flash')) # New: Gemini model selection
+        self.gemini_model_var = tk.StringVar(value=CONFIG.get('gemini_model', 'gemini-2.5-flash')) # New: Gemini model selection
         
         # --- 스타일 설정 ---
         self.style = ttk.Style(self)
@@ -297,82 +298,65 @@ class App(tk.Tk):
         
         video_map = {v['id']: v for v in self.selected_videos}
 
-        for i in range(0, total, batch_size):
-            batch_videos = self.selected_videos[i:i+batch_size]
-            self.q.put(("log", f"--- 배치 처리 시작: {i+1} ~ {min(i+batch_size, total)} / {total} ---"))
-
-            tasks = []
-            for video in batch_videos:
-                video_id = video['id']
-                video_title = video['title']
-                video_duration_seconds = video.get('total_seconds', 0) # Initialize with default
-                processing_duration = 0 # Initialize with default
-
-                self.q.put(("log", f"  - '{video_title}' 스크립트 준비 중..."))
-                start_time = time.time() # 개별 영상 처리 시작 시간 기록
-                try:
-                    transcript, _ = youtube_helper.get_transcript(video_id)
-                    end_time = time.time() # 개별 영상 처리 종료 시간 기록
-                    processing_duration = end_time - start_time
-                    
-                    speed_ratio = "N/A"
-                    if processing_duration > 0:
-                        speed_ratio = f"{video_duration_seconds / processing_duration:.2f}x"
-
-                    if not transcript:
-                        self.q.put(("log", f"  - 경고: '{video_title}' 스크립트를 찾을 수 없어 건너뜁니다. (처리 시간: {processing_duration:.2f}초)"))
-                        continue
-                    
-                    prompt_with_title = f"영상 제목: {video_title}\n\n{self.user_prompt}"
-                    full_prompt = f"{prompt_with_title}\n\n--- 원본 스크립트 ---\n{transcript}\n--- 원본 스크립트 끝 ---"
-                    tasks.append({"id": video_id, "task": full_prompt, "video_duration_seconds": video_duration_seconds, "processing_duration": processing_duration})
-
-                except Exception as e:
-                    self.q.put(("log", f"  - ✗ 오류: '{video_title}' 스크립트 추출 중 문제 발생 - {e} (처리 시간: {processing_duration:.2f}초, 영상 길이: {video_duration_seconds}초)"))
-
-            if not tasks:
-                self.q.put(("log", "--- 현재 배치에서 처리할 작업이 없습니다. ---"))
-                continue
-
+        self.q.put(("log", f"--- 총 {total}개 영상 배치 처리 시작 ---"))
+        
+        tasks = []
+        for i, video in enumerate(self.selected_videos):
+            video_id = video['id']
+            video_title = video['title']
+            self.q.put(("log", f"  - [{i+1}/{total}] '{video_title}' 스크립트 준비 중..."))
             try:
-                self.q.put(("log", f"  - Gemini API로 {len(tasks)}개 작업 배치 요청..."))
-                results = gemini_helper.process_batch_with_gemini(tasks, self.gemini_model_var.get())
+                transcript, _ = youtube_helper.get_transcript(video_id)
+                if not transcript:
+                    self.q.put(("log", f"  - 경고: '{video_title}' 스크립트를 찾을 수 없어 건너뜁니다."))
+                    continue
                 
-                result_map = {res['id']: res['result'] for res in results}
-
-                for task in tasks:
-                    video_id = task['id']
-                    video_title = video_map[video_id]['title']
-                    video_duration_seconds = task['video_duration_seconds']
-                    processing_duration = task['processing_duration']
-
-                    speed_ratio = "N/A"
-                    if processing_duration > 0:
-                        speed_ratio = f"{video_duration_seconds / processing_duration:.2f}x"
-                    
-                    if video_id in result_map:
-                        processed_content = result_map[video_id]
-                        self.q.put(("log", f"  - '{video_title}' 내용 가공 완료. 노트 저장 중... (처리 속도: {speed_ratio})"))
-                        file_helper.save_as_obsidian_note(self.obsidian_path, processed_content, self.keep_original_title.get(), video_title)
-                        self.q.put(("log", f"  - ✓ 완료: '{video_title}' 노트 생성 완료"))
-                    else:
-                        self.q.put(("log", f"  - ✗ 오류: '{video_title}' 처리 결과가 없습니다."))
+                prompt_with_title = f"영상 제목: {video_title}\n\n{self.user_prompt}"
+                full_prompt = f"{prompt_with_title}\n\n--- 원본 스크립트 ---\n{transcript}\n--- 원본 스크립트 끝 ---"
+                tasks.append({"id": video_id, "task": full_prompt, "original_title": video_title}) # original_title 추가
 
             except Exception as e:
-                self.q.put(("log", f"  - ✗ 오류: Gemini 배치 처리 중 문제 발생 - {e}"))
+                self.q.put(("log", f"  - ✗ 오류: '{video_title}' 스크립트 추출 중 문제 발생 - {e}"))
+
+        if not tasks:
+            self.q.put(("log", "--- 처리할 작업이 없습니다. ---"))
+            self.q.put(("done", "모든 작업이 완료되었습니다!"))
+            return
+
+        try:
+            self.q.put(("log", f"  - Gemini API로 {len(tasks)}개 작업 배치 요청..."))
+            results = gemini_helper.process_batch_with_gemini(tasks, self.gemini_model_var.get())
+            
+            result_map = {res['id']: res['result'] for res in results}
+
+            for task in tasks:
+                video_id = task['id']
+                video_title = task['original_title'] # original_title 사용
+                
+                if video_id in result_map:
+                    processed_content = result_map[video_id]
+                    self.q.put(("log", f"  - '{video_title}' 내용 가공 완료. 노트 저장 중..."))
+                    file_helper.save_as_obsidian_note(self.obsidian_path, processed_content, self.keep_original_title.get(), video_title)
+                    self.q.put(("log", f"  - ✓ 완료: '{video_title}' 노트 생성 완료"))
+                else:
+                    self.q.put(("log", f"  - ✗ 오류: '{video_title}' 처리 결과가 없습니다."))
+
+        except Exception as e:
+            self.q.put(("log", f"  - ✗ 오류: Gemini 배치 처리 중 문제 발생 - {e}"))
         
         self.q.put(("done", "모든 작업이 완료되었습니다!"))
 
     def log_message(self, message):
         try:
             if hasattr(self, 'progress_text') and self.progress_text.winfo_exists():
+                kst_now = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')
                 self.progress_text.config(state="normal")
                 if isinstance(message, tuple) and message[0] == 'progress':
                     # 마지막 줄을 캐리지 리턴으로 덮어쓰기
                     self.progress_text.delete("end-1l", "end")
-                    self.progress_text.insert(tk.END, f"  - Gemini 처리 진행도: {message[1]}%\r")
+                    self.progress_text.insert(tk.END, f"[{kst_now}]   - Gemini 처리 진행도: {message[1]}%\r")
                 else:
-                    self.progress_text.insert(tk.END, message + "\n")
+                    self.progress_text.insert(tk.END, f"[{kst_now}] {message}\n")
                 self.progress_text.config(state="disabled")
                 self.progress_text.see(tk.END)
         except Exception as e:
