@@ -1,7 +1,7 @@
 {
-    "font_size": 13,
+    "font_size": 14,
     "theme": "dark",
-    "gemini_model": "gemini-1.5-flash",
-    "obsidian_path": "C:/Users/bounc/OneDrive/문서/SummerVCT/Notes",
-    "gemini_batch_size": 30
+    "gemini_model": "gemini-2.5-flash",
+    "obsidian_path": "C:/Users/bounc/OneDrive/문서/GNifiedNotes",
+    "gemini_batch_size": 20
 }

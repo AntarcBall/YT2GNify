@@ -23,7 +23,7 @@ def load_gemini_model_from_config():
 
 def process_batch_with_gemini(tasks):
     """
-    여러 작업을 배치로 묶어 Gemini API에 한 번에 요청하고 결과를 반환합니다.
+    여러 작업을 순차적으로 Gemini API에 요청하고 진행 상황을 표시하며 결과를 반환합니다.
     
     Args:
         tasks (list): 각 항목이 {"id": "...", "task": "..."} 형태의 딕셔너리인 리스트
@@ -33,36 +33,26 @@ def process_batch_with_gemini(tasks):
     """
     model_name = load_gemini_model_from_config()
     model = genai.GenerativeModel(model_name)
+    results = []
+    total_tasks = len(tasks)
 
-    # Gemini API에 전달할 프롬프트 구성
-    prompt = f"""
-너는 이제부터 질문 목록에 대해 JSON 형식으로만 답변하는 봇이야.
-다음은 처리해야 할 작업 목록이 담긴 JSON 배열이야. 각 항목의 'task'를 수행하고 'id'와 함께 결과를 JSON 배열 형식으로 반환해 줘.
+    for i, task in enumerate(tasks):
+        try:
+            # 진행 상황을 캐리지 리턴으로 출력
+            print(f"Processing... {i + 1}/{total_tasks}", end='\r', flush=True)
+            
+            # Gemini API에 전달할 프롬프트 (기존 task가 프롬프트 역할)
+            prompt = task["task"]
+            response = model.generate_content(prompt)
+            
+            result_text = "".join([part.text for part in response.parts])
+            results.append({"id": task["id"], "result": result_text})
 
-JSON
+        except Exception as e:
+            # 에러 발생 시, 줄바꿈 후 에러 메시지 출력
+            print(f"\nAn error occurred while processing task {task['id']}: {e}")
+            results.append({"id": task["id"], "result": f"Error: {e}"})
 
-{json.dumps(tasks, indent=2, ensure_ascii=False)}
-"""
-    
-    print(f"[Gemini] Batch request sent with {len(tasks)} tasks.")
-    response = model.generate_content(prompt)
-    
-    try:
-        # 응답 텍스트에서 JSON 부분만 추출
-        # 응답이 "JSON\n[...]" 또는 "```json\n[...]형식일 수 있음
-        response_text = response.text
-        if '```json' in response_text:
-            json_part = response_text.split('```json')[1].split('```')[0].strip()
-        elif 'JSON' in response_text:
-            json_part = response_text.split('JSON')[1].strip()
-        else:
-            json_part = response_text # 순수 JSON만 반환된 경우
-
-        results = json.loads(json_part)
-        print(f"[Gemini] Batch response received and parsed successfully.")
-        return results
-    except (json.JSONDecodeError, IndexError) as e:
-        print(f"[Gemini] Error parsing batch response: {e}")
-        print(f"[Gemini] Raw response text: {response.text}")
-        # 오류 발생 시, 각 태스크에 대해 오류 메시지를 포함한 결과 반환
-        return [{"id": task["id"], "result": f"Error processing batch response: {e}"} for task in tasks]
+    # 모든 작업 완료 후, 줄바꿈 및 완료 메시지 출력
+    print(f"\nProcessing complete. {total_tasks}/{total_tasks}")
+    return results
