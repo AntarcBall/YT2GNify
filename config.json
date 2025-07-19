@@ -6,5 +6,5 @@
     "gemini_batch_size": 100,
     "youtube_url": "https://www.youtube.com/@Normaltic",
     "min_video_duration": 120,
-    "run_ip_test": false
+    "run_ip_test": true
 }
