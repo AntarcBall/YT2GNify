@@ -49,8 +49,7 @@ JSON
     
     try:
         # 응답 텍스트에서 JSON 부분만 추출
-        # 응답이 "JSON\n[...]" 또는 "```json\n[...]
-```" 형식일 수 있음
+        # 응답이 "JSON\n[...]" 또는 "```json\n[...]형식일 수 있음
         response_text = response.text
         if '```json' in response_text:
             json_part = response_text.split('```json')[1].split('```')[0].strip()
