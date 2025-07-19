@@ -353,8 +353,19 @@ if __name__ == "__main__":
             raise ValueError("YouTube API 키가 설정되지 않았습니다. MYAPI.json 파일을 확인해주세요.")
         if not gemini_helper.GEMINI_API_KEY:
             raise ValueError("Gemini API 키가 설정되지 않았습니다. MYAPI.json 파일을 확인해주세요.")
-        app = App()
-        app.mainloop()
+        
+        # Gemini API 접근성 확인
+        is_accessible, message = gemini_helper.check_gemini_api()
+        if not is_accessible:
+            # API 접근 불가 시, 사용자에게 알리고 프로그램 종료
+            print(f"오류: {message}")
+            messagebox.showerror("API 연결 오류", f"{message}\n\nIP가 차단되었거나 네트워크 연결에 문제가 있을 수 있습니다. 프로그램을 종료합니다.")
+        else:
+            print(message) # API 접근 가능 메시지 출력
+            app = App()
+            app.mainloop()
+
     except ValueError as e:
         print(f"오류: {e}")
         print("MYAPI.json 파일에 유효한 API 키를 설정해주세요.")
+        messagebox.showerror("설정 오류", str(e))

@@ -21,6 +21,17 @@ def load_gemini_model_from_config():
     except (FileNotFoundError, json.JSONDecodeError):
         return "gemini-1.5-flash" # 파일이 없거나 오류 발생 시 기본값
 
+def check_gemini_api():
+    """
+    Gemini API에 간단한 요청을 보내 접근성을 확인합니다.
+    """
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        model.generate_content("test")
+        return True, "Gemini API is accessible."
+    except Exception as e:
+        return False, f"Failed to access Gemini API: {e}"
+
 def process_batch_with_gemini(tasks):
     """
     여러 작업을 순차적으로 Gemini API에 요청하고 진행 상황을 표시하며 결과를 반환합니다.
