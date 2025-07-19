@@ -18,7 +18,8 @@ def load_config(filepath="config.json"):
         "theme": "dark",
         "obsidian_path": "C:/Users/bounc/OneDrive/문서/SummerVCT/Notes",
         "gemini_batch_size": 30,
-        "youtube_url": "https://www.youtube.com/@slow_doctor"
+        "youtube_url": "https://www.youtube.com/@slow_doctor",
+        "min_video_duration": 120 # Default to 2 minutes (120 seconds)
     }
 
     if not os.path.exists(config_path):
@@ -32,7 +33,8 @@ def load_config(filepath="config.json"):
                 "theme": config.get("theme", defaults["theme"]),
                 "obsidian_path": config.get("obsidian_path", defaults["obsidian_path"]),
                 "gemini_batch_size": config.get("gemini_batch_size", defaults["gemini_batch_size"]),
-                "youtube_url": config.get("youtube_url", defaults["youtube_url"])
+                "youtube_url": config.get("youtube_url", defaults["youtube_url"]),
+                "min_video_duration": config.get("min_video_duration", defaults["min_video_duration"])
             }
     except (json.JSONDecodeError, IOError):
         return defaults
@@ -68,6 +70,7 @@ class App(tk.Tk):
         self.font_size = CONFIG['font_size']
         self.is_dark_mode = tk.BooleanVar(value=(CONFIG['theme'] == 'dark'))
         self.include_shorts = tk.BooleanVar(value=False)
+        self.min_duration_seconds = tk.IntVar(value=CONFIG.get('min_video_duration', 120)) # Default to 120 seconds (2 minutes)
         
         # --- 스타일 설정 ---
         self.style = ttk.Style(self)
@@ -110,6 +113,12 @@ class App(tk.Tk):
         if hasattr(self, 'progress_text') and self.progress_text.winfo_exists():
             self.progress_text.config(bg=entry_bg, fg=fg_color, font=current_font)
             
+    def update_duration_label(self, *args):
+        total_seconds = self.min_duration_seconds.get()
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        self.duration_label.config(text=f"{minutes}분 {seconds}초")
+
     def change_font_size(self, delta):
         new_size = self.font_size + delta
         if 8 <= new_size <= 24:
@@ -133,6 +142,16 @@ class App(tk.Tk):
         ttk.Button(control_frame, text="글씨 크게", command=lambda: self.change_font_size(1)).pack(side="left", padx=5)
         ttk.Checkbutton(control_frame, text="다크 모드", variable=self.is_dark_mode, command=self.update_styles).pack(side="left", padx=10)
         ttk.Checkbutton(control_frame, text="Shorts 영상 포함", variable=self.include_shorts).pack(side="left", padx=10)
+
+        # 최소 영상 길이 설정 (슬라이더)
+        duration_frame = ttk.Frame(control_frame)
+        duration_frame.pack(side="left", padx=10)
+        ttk.Label(duration_frame, text="최소 영상 길이 (분):").pack(side="left")
+        self.duration_slider = ttk.Scale(duration_frame, from_=0, to=60, orient="horizontal", variable=self.min_duration_seconds, command=self.update_duration_label)
+        self.duration_slider.pack(side="left", padx=5)
+        self.duration_label = ttk.Label(duration_frame, text="2분 0초")
+        self.duration_label.pack(side="left")
+        self.update_duration_label() # 초기값 설정
 
         main_content_frame = ttk.Frame(scene1)
         main_content_frame.pack(fill="both", expand=True)
@@ -170,6 +189,7 @@ class App(tk.Tk):
         self.channel_url = self.url_entry.get()
         self.obsidian_path = self.path_entry.get()
         self.user_prompt = self.prompt_text.get("1.0", tk.END)
+        self.min_video_duration = self.min_duration_seconds.get()
 
         if not self.channel_url or not self.obsidian_path:
             messagebox.showerror("입력 오류", "채널 URL과 저장 경로는 필수입니다.")
@@ -180,7 +200,7 @@ class App(tk.Tk):
 
     def fetch_videos_thread(self):
         try:
-            self.all_videos = youtube_helper.get_videos_from_channel(self.channel_url, self.include_shorts.get())
+            self.all_videos = youtube_helper.get_videos_from_channel(self.channel_url, self.include_shorts.get(), self.min_video_duration)
             self.q.put(("videos_fetched", self.all_videos[:30]))
         except Exception as e:
             self.q.put(("error", f"영상 목록 로딩 실패: {e}"))

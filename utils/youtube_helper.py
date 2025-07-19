@@ -65,10 +65,11 @@ def get_channel_id_from_url(url):
                 return None # 검색 실패 시 None 반환
     return None
 
-def get_videos_from_channel(channel_url, include_shorts=False):
+def get_videos_from_channel(channel_url, include_shorts=False, min_duration_seconds=0):
     """
     채널의 모든 영상 목록과 각 영상의 길이를 가져와 반환합니다.
     include_shorts 파라미터로 Shorts 영상 포함 여부를 제어합니다.
+    min_duration_seconds 파라미터로 최소 영상 길이를 설정합니다.
     """
     global LAST_FETCHED_VIDEOS
     
@@ -125,12 +126,20 @@ def get_videos_from_channel(channel_url, include_shorts=False):
             for item in video_details_res.get('items', []):
                 video_id = item['id']
                 duration_iso = item.get('contentDetails', {}).get('duration', 'PT0S')
+                duration_parsed = parse_duration(duration_iso)
+                total_seconds = int(duration_parsed.total_seconds())
+
+                # 최소 영상 길이 필터링
+                if total_seconds < min_duration_seconds:
+                    continue
+
                 duration_formatted = parse_iso8601_duration(duration_iso)
                 
                 videos.append({
                     'id': video_id,
                     'title': video_titles.get(video_id, "제목 없음"),
-                    'duration': duration_formatted
+                    'duration': duration_formatted,
+                    'total_seconds': total_seconds
                 })
         except Exception as e:
             print(f"영상 길이 정보를 가져오는 중 오류 발생 (ID: {chunk_ids}): {e}")
